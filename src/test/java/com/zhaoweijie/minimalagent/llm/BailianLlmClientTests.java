@@ -56,7 +56,8 @@ class BailianLlmClientTests {
         client = new BailianLlmClient(
                 builder.baseUrl(properties.getBaseUrl()).build(),
                 properties,
-                objectMapper
+                objectMapper,
+                new BailianResponseParser(objectMapper)
         );
     }
 
@@ -196,7 +197,8 @@ class BailianLlmClientTests {
         BailianLlmClient timeoutClient = new BailianLlmClient(
                 timeoutRestClient,
                 properties,
-                objectMapper
+                objectMapper,
+                new BailianResponseParser(objectMapper)
         );
 
         assertThatThrownBy(() -> timeoutClient.chat(contextWithUserMessage("hello"), List.of()))
@@ -227,6 +229,7 @@ class BailianLlmClientTests {
                         """
                         {"choices":[{"message":{"tool_calls":[{
                           "id":"call-1",
+                          "type":"function",
                           "function":{"name":"calculator","arguments":"not-json"}
                         }]}}]}
                         """,

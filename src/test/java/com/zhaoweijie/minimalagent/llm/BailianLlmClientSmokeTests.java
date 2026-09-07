@@ -38,10 +38,12 @@ class BailianLlmClientSmokeTests {
         properties.setModel(environmentOrDefault("BAILIAN_MODEL", "qwen-plus"));
         RestClient restClient = new BailianClientConfiguration()
                 .bailianRestClient(RestClient.builder(), properties);
+        ObjectMapper objectMapper = new ObjectMapper();
         BailianLlmClient client = new BailianLlmClient(
                 restClient,
                 properties,
-                new ObjectMapper()
+                objectMapper,
+                new BailianResponseParser(objectMapper)
         );
         AgentContext context = new AgentContext(
                 "Answer briefly.",
