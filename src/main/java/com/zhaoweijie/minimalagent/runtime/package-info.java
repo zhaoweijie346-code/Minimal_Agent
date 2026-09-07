@@ -1,4 +1,4 @@
 /**
- * 实现 Agent 运行时及后续 Agent Loop 编排。
+ * 实现项目自有的 Agent Runtime 与原生 Function Calling 主循环编排。
  */
 package com.zhaoweijie.minimalagent.runtime;
