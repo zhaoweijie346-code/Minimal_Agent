@@ -1,7 +1,7 @@
 # Agent 上下文窗口配置，可通过环境变量覆盖默认值。
 agent:
   context:
-    system-prompt: "${AGENT_SYSTEM_PROMPT:You are a helpful AI assistant.}"
+    system-prompt-resource: "classpath:prompts/agent-system.txt"
     max-recent-messages: "${AGENT_MAX_RECENT_MESSAGES:20}"
     compression-threshold: "${AGENT_COMPRESSION_THRESHOLD:40}"
     max-summary-characters: "${AGENT_MAX_SUMMARY_CHARACTERS:4000}"

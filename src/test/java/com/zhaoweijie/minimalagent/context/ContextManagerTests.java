@@ -3,6 +3,7 @@ package com.zhaoweijie.minimalagent.context;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhaoweijie.minimalagent.action.ToolCallAction;
 import com.zhaoweijie.minimalagent.config.AgentContextProperties;
+import com.zhaoweijie.minimalagent.config.SystemPromptProvider;
 import com.zhaoweijie.minimalagent.exception.SessionAccessDeniedException;
 import com.zhaoweijie.minimalagent.session.AgentSession;
 import com.zhaoweijie.minimalagent.session.InMemorySessionManager;
@@ -26,11 +27,14 @@ class ContextManagerTests {
     /** 测试使用的 Jackson 对象映射器。 */
     private ObjectMapper objectMapper;
 
+    /** 测试使用的固定 System Prompt 提供者。 */
+    private SystemPromptProvider systemPromptProvider;
+
     @BeforeEach
     void setUp() {
         sessionManager = new InMemorySessionManager();
         properties = new AgentContextProperties();
-        properties.setSystemPrompt("system instruction");
+        systemPromptProvider = () -> "system instruction";
         objectMapper = new ObjectMapper();
     }
 
@@ -47,6 +51,7 @@ class ContextManagerTests {
         ContextManager contextManager = contextManager();
         AgentContext firstContext = contextManager.build("user-1", "session-1");
 
+        assertThat(firstContext.systemPrompt()).isEqualTo("system instruction");
         assertThat(firstContext.recentMessages())
                 .extracting(AgentMessage::content)
                 .containsExactly("first session");
@@ -172,7 +177,7 @@ class ContextManagerTests {
                 new BasicMemoryCompressor(properties),
                 properties
         );
-        return new ContextManager(memoryManager, properties);
+        return new ContextManager(memoryManager, properties, systemPromptProvider);
     }
 
     /**

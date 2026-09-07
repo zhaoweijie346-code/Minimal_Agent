@@ -10,9 +10,6 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "agent.context")
 public class AgentContextProperties {
 
-    /** 每次请求放在首位的 System Prompt。 */
-    private String systemPrompt = "You are a helpful AI assistant.";
-
     /** 从 Session 尾部选取的最大近期消息数量。 */
     private int maxRecentMessages = 20;
 
@@ -21,14 +18,6 @@ public class AgentContextProperties {
 
     /** 压缩摘要允许保留的最大字符数。 */
     private int maxSummaryCharacters = 4000;
-
-    public String getSystemPrompt() {
-        return systemPrompt;
-    }
-
-    public void setSystemPrompt(String systemPrompt) {
-        this.systemPrompt = systemPrompt;
-    }
 
     public int getMaxRecentMessages() {
         return maxRecentMessages;

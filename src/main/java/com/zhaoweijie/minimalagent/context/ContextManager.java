@@ -1,6 +1,7 @@
 package com.zhaoweijie.minimalagent.context;
 
 import com.zhaoweijie.minimalagent.config.AgentContextProperties;
+import com.zhaoweijie.minimalagent.config.SystemPromptProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -17,18 +18,24 @@ public class ContextManager {
     /** 上下文系统指令和消息窗口配置。 */
     private final AgentContextProperties properties;
 
+    /** 从独立资源文件提供 System Prompt。 */
+    private final SystemPromptProvider systemPromptProvider;
+
     /**
      * 创建 Agent Context 管理器。
      *
      * @param memoryManager Session Memory 管理器
      * @param properties    上下文配置属性
+     * @param systemPromptProvider System Prompt 提供者
      */
     public ContextManager(
             SessionMemoryManager memoryManager,
-            AgentContextProperties properties
+            AgentContextProperties properties,
+            SystemPromptProvider systemPromptProvider
     ) {
         this.memoryManager = memoryManager;
         this.properties = properties;
+        this.systemPromptProvider = systemPromptProvider;
     }
 
     /**
@@ -64,7 +71,7 @@ public class ContextManager {
         );
 
         return new AgentContext(
-                properties.getSystemPrompt(),
+                systemPromptProvider.getSystemPrompt(),
                 memory.summary(),
                 recentMessages,
                 currentToolResult
