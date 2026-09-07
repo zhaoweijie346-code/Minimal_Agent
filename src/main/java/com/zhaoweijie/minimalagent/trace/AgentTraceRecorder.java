@@ -47,7 +47,7 @@ public interface AgentTraceRecorder {
             long durationMillis
     );
 
-    /** 获取指定 Session 的行为事件快照。 */
+    /** 按 traceId 获取一次请求的完整 Trace 快照。 */
     AgentTrace getTrace(String traceId);
 
     /** 获取指定 Session 下的全部请求 Trace 快照。 */

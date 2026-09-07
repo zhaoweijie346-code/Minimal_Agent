@@ -2,6 +2,7 @@ package com.zhaoweijie.minimalagent.trace;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.zhaoweijie.minimalagent.action.ToolCallAction;
+import com.zhaoweijie.minimalagent.exception.TraceNotFoundException;
 import com.zhaoweijie.minimalagent.tool.ToolResult;
 import org.springframework.stereotype.Component;
 
@@ -152,7 +153,7 @@ public class InMemoryAgentTraceRecorder implements AgentTraceRecorder {
     private TraceState requireState(String traceId) {
         TraceState state = traces.get(traceId);
         if (state == null) {
-            throw new IllegalArgumentException("Trace not found: " + traceId);
+            throw new TraceNotFoundException(traceId);
         }
         return state;
     }
