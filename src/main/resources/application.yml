@@ -5,3 +5,10 @@ agent:
     max-recent-messages: "${AGENT_MAX_RECENT_MESSAGES:20}"
     compression-threshold: "${AGENT_COMPRESSION_THRESHOLD:40}"
     max-summary-characters: "${AGENT_MAX_SUMMARY_CHARACTERS:4000}"
+
+# 百炼连接信息全部来自外部配置；API Key 没有仓库内默认值。
+llm:
+  bailian:
+    api-key: "${DASHSCOPE_API_KEY:}"
+    base-url: "${BAILIAN_BASE_URL:}"
+    model: "${BAILIAN_MODEL:qwen-plus}"

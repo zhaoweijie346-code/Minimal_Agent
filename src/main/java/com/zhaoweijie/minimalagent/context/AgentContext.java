@@ -1,7 +1,5 @@
 package com.zhaoweijie.minimalagent.context;
 
-import com.fasterxml.jackson.databind.JsonNode;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -12,7 +10,6 @@ import java.util.List;
  * @param sessionSummary    Session 历史摘要；没有摘要时为空
  * @param recentMessages    截断后的近期结构化消息
  * @param currentToolResult 本轮尚未写入 Session 的工具结果消息
- * @param toolDefinitions   动态生成的 OpenAI Compatible tools 定义
  */
 public record AgentContext(
         /** 应用配置的系统指令。 */
@@ -22,17 +19,12 @@ public record AgentContext(
         /** 截断后的近期结构化消息。 */
         List<AgentMessage> recentMessages,
         /** 本轮尚未写入 Session 的工具结果消息。 */
-        AgentMessage currentToolResult,
-        /** 动态生成的 OpenAI Compatible tools 定义。 */
-        List<JsonNode> toolDefinitions
+        AgentMessage currentToolResult
 ) {
 
     public AgentContext {
         // 固化本次调用的列表快照，避免构建完成后被外部集合修改。
         recentMessages = recentMessages == null ? List.of() : List.copyOf(recentMessages);
-        toolDefinitions = toolDefinitions == null ? List.of() : toolDefinitions.stream()
-                .map(node -> (JsonNode) node.deepCopy())
-                .toList();
     }
 
     /**

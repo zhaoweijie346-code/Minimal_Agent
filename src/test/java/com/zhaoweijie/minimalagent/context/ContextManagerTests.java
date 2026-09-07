@@ -6,8 +6,6 @@ import com.zhaoweijie.minimalagent.config.AgentContextProperties;
 import com.zhaoweijie.minimalagent.exception.SessionAccessDeniedException;
 import com.zhaoweijie.minimalagent.session.AgentSession;
 import com.zhaoweijie.minimalagent.session.InMemorySessionManager;
-import com.zhaoweijie.minimalagent.tool.AgentTool;
-import com.zhaoweijie.minimalagent.tool.ToolRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -16,8 +14,6 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class ContextManagerTests {
 
@@ -48,7 +44,7 @@ class ContextManagerTests {
         second.getMessages().add(message(AgentMessageRole.USER, "second session"));
         sessionManager.update(second);
 
-        ContextManager contextManager = contextManager(List.of());
+        ContextManager contextManager = contextManager();
         AgentContext firstContext = contextManager.build("user-1", "session-1");
 
         assertThat(firstContext.recentMessages())
@@ -67,7 +63,7 @@ class ContextManagerTests {
                 .forEach(session.getMessages()::add);
         sessionManager.update(session);
 
-        AgentContext context = contextManager(List.of()).build("user-1", "session-1");
+        AgentContext context = contextManager().build("user-1", "session-1");
 
         assertThat(context.recentMessages())
                 .extracting(AgentMessage::content)
@@ -93,7 +89,7 @@ class ContextManagerTests {
         session.getMessages().add(new AgentMessage(AgentMessageRole.TOOL, "2", "call-1", null));
         sessionManager.update(session);
 
-        AgentContext context = contextManager(List.of()).build("user-1", "session-1");
+        AgentContext context = contextManager().build("user-1", "session-1");
 
         assertThat(context.recentMessages()).hasSize(2);
         assertThat(context.recentMessages().get(0).toolCalls()).containsExactly(toolCall);
@@ -124,7 +120,7 @@ class ContextManagerTests {
                 null
         );
 
-        AgentContext context = contextManager(List.of()).build(
+        AgentContext context = contextManager().build(
                 "user-1",
                 "session-1",
                 currentResult
@@ -143,28 +139,6 @@ class ContextManagerTests {
     }
 
     @Test
-    void buildsApiToolDefinitionsOutsideSystemPrompt() {
-        AgentTool tool = mock(AgentTool.class);
-        when(tool.name()).thenReturn("sample-tool");
-        when(tool.description()).thenReturn("sample description");
-        when(tool.parameterSchema()).thenReturn(
-                objectMapper.createObjectNode().put("type", "object")
-        );
-        sessionManager.getOrCreate("session-1", "user-1");
-
-        AgentContext context = contextManager(List.of(tool)).build("user-1", "session-1");
-
-        assertThat(context.systemPrompt()).doesNotContain("sample-tool");
-        assertThat(context.toolDefinitions()).hasSize(1);
-        assertThat(context.toolDefinitions().get(0).path("type").textValue())
-                .isEqualTo("function");
-        assertThat(context.toolDefinitions().get(0).path("function").path("name").textValue())
-                .isEqualTo("sample-tool");
-        assertThat(context.toolDefinitions().get(0).path("function").path("parameters")
-                .path("type").textValue()).isEqualTo("object");
-    }
-
-    @Test
     void recallsCompressedMemoryIntoApiMessagesBeforeModelCall() {
         properties.setCompressionThreshold(2);
         properties.setMaxRecentMessages(1);
@@ -174,7 +148,7 @@ class ContextManagerTests {
         session.getMessages().add(message(AgentMessageRole.USER, "latest request"));
         sessionManager.update(session);
 
-        AgentContext context = contextManager(List.of()).build("user-1", "session-1");
+        AgentContext context = contextManager().build("user-1", "session-1");
 
         assertThat(context.sessionSummary()).contains("original goal", "important fact");
         assertThat(context.recentMessages())
@@ -190,20 +164,15 @@ class ContextManagerTests {
     }
 
     /**
-     * 使用指定工具集合创建 ContextManager。
+     * 创建测试使用的 ContextManager。
      */
-    private ContextManager contextManager(List<AgentTool> tools) {
+    private ContextManager contextManager() {
         SessionMemoryManager memoryManager = new SessionMemoryManager(
                 sessionManager,
                 new BasicMemoryCompressor(properties),
                 properties
         );
-        return new ContextManager(
-                memoryManager,
-                new ToolRegistry(tools),
-                objectMapper,
-                properties
-        );
+        return new ContextManager(memoryManager, properties);
     }
 
     /**
