@@ -1,0 +1,5 @@
+# Agent 上下文窗口配置，可通过环境变量覆盖默认值。
+agent:
+  context:
+    system-prompt: "${AGENT_SYSTEM_PROMPT:You are a helpful AI assistant.}"
+    max-recent-messages: "${AGENT_MAX_RECENT_MESSAGES:20}"
