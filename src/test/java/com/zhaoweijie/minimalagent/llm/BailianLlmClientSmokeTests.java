@@ -17,7 +17,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 class BailianLlmClientSmokeTests {
 
     /**
-     * 仅当显式启用 bailian-smoke profile 且存在 API Key 时调用真实百炼。
+     * 仅当显式启用 integration profile 且存在 API Key 时调用真实百炼。
      */
     @Test
     void callsRealBailianWhenExplicitlyEnabled() {
@@ -26,7 +26,7 @@ class BailianLlmClientSmokeTests {
                 System.getenv("SPRING_PROFILES_ACTIVE")
         );
         String apiKey = System.getenv("DASHSCOPE_API_KEY");
-        assumeTrue(activeProfiles != null && activeProfiles.contains("bailian-smoke"));
+        assumeTrue(hasProfile(activeProfiles, "integration"));
         assumeTrue(apiKey != null && !apiKey.isBlank());
 
         BailianProperties properties = new BailianProperties();
@@ -62,6 +62,16 @@ class BailianLlmClientSmokeTests {
      */
     private String firstNonBlank(String first, String second) {
         return first != null && !first.isBlank() ? first : second;
+    }
+
+    /**
+     * 按 Spring Profile 分隔规则检查完整 Profile 名称，避免子串误匹配。
+     */
+    private boolean hasProfile(String activeProfiles, String expectedProfile) {
+        if (activeProfiles == null || activeProfiles.isBlank()) {
+            return false;
+        }
+        return List.of(activeProfiles.split("[,;\\s]+")).contains(expectedProfile);
     }
 
     /**
