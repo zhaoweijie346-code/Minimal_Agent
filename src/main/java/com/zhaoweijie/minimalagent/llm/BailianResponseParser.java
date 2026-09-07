@@ -4,8 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhaoweijie.minimalagent.action.ToolCallAction;
-import com.zhaoweijie.minimalagent.exception.LlmClientException;
+import com.zhaoweijie.minimalagent.exception.InvalidLlmOutputException;
 import com.zhaoweijie.minimalagent.exception.LlmErrorType;
+import com.zhaoweijie.minimalagent.exception.ToolArgumentException;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -37,13 +38,16 @@ public class BailianResponseParser {
      */
     public LlmResponse parse(String responseBody) {
         if (responseBody == null || responseBody.isBlank()) {
-            throw new LlmClientException(LlmErrorType.EMPTY_RESPONSE, "Bailian returned no response");
+            throw new InvalidLlmOutputException(
+                    LlmErrorType.EMPTY_RESPONSE,
+                    "Bailian returned no response"
+            );
         }
 
         JsonNode root = readResponseJson(responseBody);
         JsonNode choices = root.path("choices");
         if (!choices.isArray() || choices.isEmpty()) {
-            throw new LlmClientException(
+            throw new InvalidLlmOutputException(
                     LlmErrorType.EMPTY_RESPONSE,
                     "Bailian response contains no choices"
             );
@@ -51,7 +55,7 @@ public class BailianResponseParser {
 
         JsonNode message = choices.get(0).path("message");
         if (!message.isObject()) {
-            throw new LlmClientException(
+            throw new InvalidLlmOutputException(
                     LlmErrorType.INVALID_RESPONSE,
                     "Bailian response contains no assistant message"
             );
@@ -60,7 +64,7 @@ public class BailianResponseParser {
         String content = parseContent(message.get("content"));
         List<ToolCallAction> toolCalls = parseToolCalls(message.get("tool_calls"));
         if (toolCalls.isEmpty() && (content == null || content.isBlank())) {
-            throw new LlmClientException(
+            throw new InvalidLlmOutputException(
                     LlmErrorType.EMPTY_RESPONSE,
                     "Bailian assistant message is empty"
             );
@@ -75,7 +79,7 @@ public class BailianResponseParser {
         try {
             return objectMapper.readTree(responseBody);
         } catch (JsonProcessingException exception) {
-            throw new LlmClientException(
+            throw new InvalidLlmOutputException(
                     LlmErrorType.INVALID_RESPONSE,
                     "Bailian returned invalid JSON",
                     exception
@@ -91,7 +95,7 @@ public class BailianResponseParser {
             return null;
         }
         if (!contentNode.isTextual()) {
-            throw new LlmClientException(
+            throw new InvalidLlmOutputException(
                     LlmErrorType.INVALID_RESPONSE,
                     "Bailian assistant content is not text"
             );
@@ -143,15 +147,13 @@ public class BailianResponseParser {
         try {
             JsonNode arguments = objectMapper.readTree(argumentsText);
             if (arguments == null || !arguments.isObject()) {
-                throw new LlmClientException(
-                        LlmErrorType.INVALID_ARGUMENTS,
+                throw new ToolArgumentException(
                         "Bailian tool arguments must be a JSON object"
                 );
             }
             return arguments;
         } catch (JsonProcessingException exception) {
-            throw new LlmClientException(
-                    LlmErrorType.INVALID_ARGUMENTS,
+            throw new ToolArgumentException(
                     "Bailian tool arguments contain invalid JSON",
                     exception
             );
@@ -172,7 +174,7 @@ public class BailianResponseParser {
     /**
      * 创建结构非法的统一异常。
      */
-    private LlmClientException invalidResponse(String message) {
-        return new LlmClientException(LlmErrorType.INVALID_RESPONSE, message);
+    private InvalidLlmOutputException invalidResponse(String message) {
+        return new InvalidLlmOutputException(LlmErrorType.INVALID_RESPONSE, message);
     }
 }

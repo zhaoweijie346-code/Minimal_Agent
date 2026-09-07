@@ -1,11 +1,17 @@
 package com.zhaoweijie.minimalagent.controller;
 
 import com.zhaoweijie.minimalagent.controller.dto.ErrorResponse;
+import com.zhaoweijie.minimalagent.exception.InvalidLlmOutputException;
+import com.zhaoweijie.minimalagent.exception.LlmApiException;
 import com.zhaoweijie.minimalagent.exception.LlmClientException;
-import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsExceededException;
+import com.zhaoweijie.minimalagent.exception.LlmErrorType;
+import com.zhaoweijie.minimalagent.exception.LlmTimeoutException;
+import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsException;
 import com.zhaoweijie.minimalagent.exception.SessionAccessDeniedException;
 import com.zhaoweijie.minimalagent.exception.SessionNotFoundException;
 import com.zhaoweijie.minimalagent.exception.TraceNotFoundException;
+import com.zhaoweijie.minimalagent.exception.ToolArgumentException;
+import com.zhaoweijie.minimalagent.exception.ToolNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -84,6 +90,17 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * 将未注册工具映射为 404；正常 Agent Loop 内该异常会先转换成 ToolResult。
+     */
+    @ExceptionHandler(ToolNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleToolNotFound(
+            ToolNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return response(HttpStatus.NOT_FOUND, "TOOL_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    /**
      * 将跨用户 Session 访问映射为 403。
      */
     @ExceptionHandler(SessionAccessDeniedException.class)
@@ -97,9 +114,9 @@ public class GlobalExceptionHandler {
     /**
      * 将 Agent 最大轮数耗尽映射为不可处理请求。
      */
-    @ExceptionHandler(MaxAgentRoundsExceededException.class)
+    @ExceptionHandler(MaxAgentRoundsException.class)
     public ResponseEntity<ErrorResponse> handleMaxRounds(
-            MaxAgentRoundsExceededException exception,
+            MaxAgentRoundsException exception,
             HttpServletRequest request
     ) {
         return response(
@@ -111,14 +128,81 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 将上游百炼调用失败映射为 502，不返回底层异常或响应体。
+     * 将工具参数错误映射为 400，不回显可能由模型生成的原始 arguments。
+     */
+    @ExceptionHandler(ToolArgumentException.class)
+    public ResponseEntity<ErrorResponse> handleToolArgument(
+            ToolArgumentException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.BAD_REQUEST,
+                "TOOL_ARGUMENT_ERROR",
+                "Invalid tool arguments",
+                request
+        );
+    }
+
+    /**
+     * 将非法或空 LLM 输出映射为 502，并隐藏原始上游响应。
+     */
+    @ExceptionHandler(InvalidLlmOutputException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidLlmOutput(
+            InvalidLlmOutputException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.BAD_GATEWAY,
+                "INVALID_LLM_OUTPUT",
+                "Upstream LLM returned an invalid response",
+                request
+        );
+    }
+
+    /**
+     * 将 LLM 连接或读取超时映射为 504。
+     */
+    @ExceptionHandler(LlmTimeoutException.class)
+    public ResponseEntity<ErrorResponse> handleLlmTimeout(
+            LlmTimeoutException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.GATEWAY_TIMEOUT,
+                "LLM_TIMEOUT",
+                "Upstream LLM request timed out",
+                request
+        );
+    }
+
+    /**
+     * 将百炼限流映射为 503，其他 LLM API 错误映射为 502。
+     */
+    @ExceptionHandler(LlmApiException.class)
+    public ResponseEntity<ErrorResponse> handleLlmApi(
+            LlmApiException exception,
+            HttpServletRequest request
+    ) {
+        HttpStatus status = exception.getErrorType() == LlmErrorType.RATE_LIMIT
+                ? HttpStatus.SERVICE_UNAVAILABLE
+                : HttpStatus.BAD_GATEWAY;
+        return response(status, "LLM_API_ERROR", "Upstream LLM request failed", request);
+    }
+
+    /**
+     * 兼容尚未迁移的通用 LLM Client 异常，同样不回显异常详情。
      */
     @ExceptionHandler(LlmClientException.class)
-    public ResponseEntity<ErrorResponse> handleLlmError(
+    public ResponseEntity<ErrorResponse> handleLlmClient(
             LlmClientException exception,
             HttpServletRequest request
     ) {
-        return response(HttpStatus.BAD_GATEWAY, "LLM_ERROR", exception.getMessage(), request);
+        return response(
+                HttpStatus.BAD_GATEWAY,
+                "LLM_ERROR",
+                "Upstream LLM processing failed",
+                request
+        );
     }
 
     /**
@@ -129,7 +213,7 @@ public class GlobalExceptionHandler {
             IllegalArgumentException exception,
             HttpServletRequest request
     ) {
-        return response(HttpStatus.BAD_REQUEST, "BAD_REQUEST", exception.getMessage(), request);
+        return response(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "Invalid request", request);
     }
 
     /**

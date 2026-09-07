@@ -9,7 +9,9 @@ import com.zhaoweijie.minimalagent.context.AgentContext;
 import com.zhaoweijie.minimalagent.context.AgentMessage;
 import com.zhaoweijie.minimalagent.context.AgentMessageRole;
 import com.zhaoweijie.minimalagent.exception.LlmClientException;
+import com.zhaoweijie.minimalagent.exception.LlmApiException;
 import com.zhaoweijie.minimalagent.exception.LlmErrorType;
+import com.zhaoweijie.minimalagent.exception.LlmTimeoutException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -179,7 +181,7 @@ class BailianLlmClientTests {
                 .andRespond(withStatus(HttpStatus.valueOf(status)));
 
         assertThatThrownBy(() -> client.chat(contextWithUserMessage("hello"), List.of()))
-                .isInstanceOfSatisfying(LlmClientException.class, exception -> {
+                .isInstanceOfSatisfying(LlmApiException.class, exception -> {
                     assertThat(exception.getErrorType()).isEqualTo(expectedType);
                     assertThat(exception.getStatusCode()).isEqualTo(status);
                     assertThat(exception.getMessage()).doesNotContain("test-api-key");
@@ -202,7 +204,7 @@ class BailianLlmClientTests {
         );
 
         assertThatThrownBy(() -> timeoutClient.chat(contextWithUserMessage("hello"), List.of()))
-                .isInstanceOfSatisfying(LlmClientException.class, exception ->
+                .isInstanceOfSatisfying(LlmTimeoutException.class, exception ->
                         assertThat(exception.getErrorType()).isEqualTo(LlmErrorType.TIMEOUT));
     }
 

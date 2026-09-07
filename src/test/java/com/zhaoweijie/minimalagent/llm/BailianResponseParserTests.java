@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.zhaoweijie.minimalagent.action.FinalAnswerAction;
 import com.zhaoweijie.minimalagent.action.ToolCallAction;
+import com.zhaoweijie.minimalagent.exception.InvalidLlmOutputException;
 import com.zhaoweijie.minimalagent.exception.LlmClientException;
 import com.zhaoweijie.minimalagent.exception.LlmErrorType;
+import com.zhaoweijie.minimalagent.exception.ToolArgumentException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -69,7 +71,9 @@ class BailianResponseParserTests {
 
     @Test
     void rejectsEmptyChoices() {
-        assertErrorType("{\"choices\":[]}", LlmErrorType.EMPTY_RESPONSE);
+        assertThatThrownBy(() -> parser.parse("{\"choices\":[]}"))
+                .isInstanceOfSatisfying(InvalidLlmOutputException.class, exception ->
+                        assertThat(exception.getErrorType()).isEqualTo(LlmErrorType.EMPTY_RESPONSE));
     }
 
     @Test
@@ -95,10 +99,10 @@ class BailianResponseParserTests {
 
     @Test
     void rejectsInvalidArgumentsJson() {
-        assertErrorType(
-                toolCallResponse("call-1", "calculator", "not-json"),
-                LlmErrorType.INVALID_ARGUMENTS
-        );
+        assertThatThrownBy(() -> parser.parse(
+                toolCallResponse("call-1", "calculator", "not-json")
+        )).isInstanceOfSatisfying(ToolArgumentException.class, exception ->
+                assertThat(exception.getErrorType()).isEqualTo(LlmErrorType.INVALID_ARGUMENTS));
     }
 
     @Test

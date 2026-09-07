@@ -2,7 +2,15 @@ package com.zhaoweijie.minimalagent.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhaoweijie.minimalagent.action.ToolCallAction;
+import com.zhaoweijie.minimalagent.exception.InvalidLlmOutputException;
+import com.zhaoweijie.minimalagent.exception.LlmApiException;
+import com.zhaoweijie.minimalagent.exception.LlmErrorType;
+import com.zhaoweijie.minimalagent.exception.LlmTimeoutException;
+import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsException;
 import com.zhaoweijie.minimalagent.exception.SessionAccessDeniedException;
+import com.zhaoweijie.minimalagent.exception.SessionNotFoundException;
+import com.zhaoweijie.minimalagent.exception.ToolArgumentException;
+import com.zhaoweijie.minimalagent.exception.ToolNotFoundException;
 import com.zhaoweijie.minimalagent.exception.TraceNotFoundException;
 import com.zhaoweijie.minimalagent.runtime.AgentRunResult;
 import com.zhaoweijie.minimalagent.runtime.AgentRuntime;
@@ -15,6 +23,9 @@ import com.zhaoweijie.minimalagent.trace.AgentTraceRecorder;
 import com.zhaoweijie.minimalagent.trace.TraceEvent;
 import com.zhaoweijie.minimalagent.trace.TraceType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -24,6 +35,9 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.stream.Stream;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -192,5 +206,78 @@ class RestApiTests {
                 .andExpect(jsonPath("$.error").value("NOT_FOUND"))
                 .andExpect(jsonPath("$.message").value("Trace not found: missing"))
                 .andExpect(jsonPath("$.stackTrace").doesNotExist());
+    }
+
+    @ParameterizedTest
+    @MethodSource("unifiedExceptionCases")
+    void mapsSpecifiedExceptionsWithoutLeakingSensitiveDetails(
+            RuntimeException exception,
+            int expectedStatus,
+            String expectedError
+    ) throws Exception {
+        when(agentRuntime.run("user-a", "session-1", "hello")).thenThrow(exception);
+
+        String responseBody = mockMvc.perform(post("/api/agent/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"userId":"user-a","sessionId":"session-1","message":"hello"}
+                                """))
+                .andExpect(status().is(expectedStatus))
+                .andExpect(jsonPath("$.error").value(expectedError))
+                .andExpect(jsonPath("$.stackTrace").doesNotExist())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        assertThat(responseBody)
+                .doesNotContain("secret-api-key", "Authorization", "Bearer", "stackTrace");
+    }
+
+    /**
+     * 提供统一异常类型、预期 HTTP 状态和稳定错误码矩阵。
+     */
+    private static Stream<Arguments> unifiedExceptionCases() {
+        String sensitiveMessage = "Authorization: Bearer secret-api-key";
+        return Stream.of(
+                Arguments.of(new ToolNotFoundException("missing-tool"), 404, "TOOL_NOT_FOUND"),
+                Arguments.of(new ToolArgumentException(sensitiveMessage), 400, "TOOL_ARGUMENT_ERROR"),
+                Arguments.of(
+                        new InvalidLlmOutputException(LlmErrorType.INVALID_RESPONSE, sensitiveMessage),
+                        502,
+                        "INVALID_LLM_OUTPUT"
+                ),
+                Arguments.of(new MaxAgentRoundsException(8), 422, "MAX_ROUNDS_EXCEEDED"),
+                Arguments.of(new SessionNotFoundException("session-1"), 404, "NOT_FOUND"),
+                Arguments.of(
+                        new SessionAccessDeniedException("session-1", "user-a"),
+                        403,
+                        "ACCESS_DENIED"
+                ),
+                Arguments.of(
+                        new LlmApiException(
+                                LlmErrorType.AUTHENTICATION,
+                                401,
+                                sensitiveMessage,
+                                null
+                        ),
+                        502,
+                        "LLM_API_ERROR"
+                ),
+                Arguments.of(
+                        new LlmApiException(
+                                LlmErrorType.RATE_LIMIT,
+                                429,
+                                sensitiveMessage,
+                                null
+                        ),
+                        503,
+                        "LLM_API_ERROR"
+                ),
+                Arguments.of(
+                        new LlmTimeoutException(sensitiveMessage, null),
+                        504,
+                        "LLM_TIMEOUT"
+                )
+        );
     }
 }

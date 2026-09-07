@@ -8,7 +8,11 @@ import com.zhaoweijie.minimalagent.context.AgentMessage;
 import com.zhaoweijie.minimalagent.context.AgentMessageRole;
 import com.zhaoweijie.minimalagent.context.ContextManager;
 import com.zhaoweijie.minimalagent.exception.LlmClientException;
-import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsExceededException;
+import com.zhaoweijie.minimalagent.exception.InvalidLlmOutputException;
+import com.zhaoweijie.minimalagent.exception.LlmApiException;
+import com.zhaoweijie.minimalagent.exception.LlmTimeoutException;
+import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsException;
+import com.zhaoweijie.minimalagent.exception.ToolArgumentException;
 import com.zhaoweijie.minimalagent.exception.ToolNotFoundException;
 import com.zhaoweijie.minimalagent.llm.LlmClient;
 import com.zhaoweijie.minimalagent.llm.LlmResponse;
@@ -125,7 +129,7 @@ public class AgentRuntime {
                 return new AgentRunResult(traceId, resolvedSessionId, answer, round);
             }
 
-            throw new MaxAgentRoundsExceededException(properties.getMaxRounds());
+            throw new MaxAgentRoundsException(properties.getMaxRounds());
         } catch (RuntimeException exception) {
             // 只记录经过筛选的错误说明，不采集请求 Header、Authorization 或 API Key。
             traceRecorder.recordError(
@@ -301,8 +305,22 @@ public class AgentRuntime {
      * 返回不包含底层请求、Header 或凭证内容的安全错误说明。
      */
     private String safeError(RuntimeException exception) {
-        if (exception instanceof LlmClientException
-                || exception instanceof MaxAgentRoundsExceededException) {
+        if (exception instanceof LlmTimeoutException) {
+            return "LLM request timed out";
+        }
+        if (exception instanceof ToolArgumentException) {
+            return "Invalid tool arguments";
+        }
+        if (exception instanceof InvalidLlmOutputException) {
+            return "Invalid LLM output";
+        }
+        if (exception instanceof LlmApiException) {
+            return "LLM API request failed";
+        }
+        if (exception instanceof LlmClientException) {
+            return "LLM processing failed";
+        }
+        if (exception instanceof MaxAgentRoundsException) {
             return exception.getMessage();
         }
         return exception.getClass().getSimpleName();

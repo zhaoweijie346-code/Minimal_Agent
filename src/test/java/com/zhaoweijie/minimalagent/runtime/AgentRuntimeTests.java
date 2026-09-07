@@ -11,7 +11,7 @@ import com.zhaoweijie.minimalagent.context.AgentMessageRole;
 import com.zhaoweijie.minimalagent.context.BasicMemoryCompressor;
 import com.zhaoweijie.minimalagent.context.ContextManager;
 import com.zhaoweijie.minimalagent.context.SessionMemoryManager;
-import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsExceededException;
+import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsException;
 import com.zhaoweijie.minimalagent.llm.FakeLlmClient;
 import com.zhaoweijie.minimalagent.llm.LlmResponse;
 import com.zhaoweijie.minimalagent.llm.ToolDefinitionProvider;
@@ -294,7 +294,7 @@ class AgentRuntimeTests {
                 "user-1",
                 "session-1",
                 "不断重试"
-        )).isInstanceOfSatisfying(MaxAgentRoundsExceededException.class, exception ->
+        )).isInstanceOfSatisfying(MaxAgentRoundsException.class, exception ->
                 assertThat(exception.getMaxRounds()).isEqualTo(2));
         assertThat(llmClient.calls()).hasSize(2);
         assertThat(sessionManager.getSession("session-1", "user-1").getMessages())

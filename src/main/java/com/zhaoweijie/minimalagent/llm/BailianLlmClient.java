@@ -8,8 +8,10 @@ import com.zhaoweijie.minimalagent.config.BailianProperties;
 import com.zhaoweijie.minimalagent.context.AgentContext;
 import com.zhaoweijie.minimalagent.context.AgentMessage;
 import com.zhaoweijie.minimalagent.context.AgentMessageRole;
+import com.zhaoweijie.minimalagent.exception.LlmApiException;
 import com.zhaoweijie.minimalagent.exception.LlmClientException;
 import com.zhaoweijie.minimalagent.exception.LlmErrorType;
+import com.zhaoweijie.minimalagent.exception.LlmTimeoutException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
@@ -88,19 +90,18 @@ public class BailianLlmClient implements LlmClient {
             throw mapHttpException(exception);
         } catch (ResourceAccessException exception) {
             if (hasTimeoutCause(exception)) {
-                throw new LlmClientException(
-                        LlmErrorType.TIMEOUT,
+                throw new LlmTimeoutException(
                         "Bailian request timed out",
                         exception
                 );
             }
-            throw new LlmClientException(
+            throw new LlmApiException(
                     LlmErrorType.CONNECTION_ERROR,
                     "Bailian connection failed",
                     exception
             );
         } catch (RestClientException exception) {
-            throw new LlmClientException(
+            throw new LlmApiException(
                     LlmErrorType.CONNECTION_ERROR,
                     "Bailian request failed",
                     exception
@@ -187,7 +188,7 @@ public class BailianLlmClient implements LlmClient {
     /**
      * 将常见 HTTP 状态映射为稳定的 LLM 错误分类。
      */
-    private LlmClientException mapHttpException(RestClientResponseException exception) {
+    private LlmApiException mapHttpException(RestClientResponseException exception) {
         int statusCode = exception.getStatusCode().value();
         LlmErrorType errorType;
         String message;
@@ -204,7 +205,7 @@ public class BailianLlmClient implements LlmClient {
             errorType = LlmErrorType.HTTP_ERROR;
             message = "Bailian HTTP request failed";
         }
-        return new LlmClientException(errorType, statusCode, message, exception);
+        return new LlmApiException(errorType, statusCode, message, exception);
     }
 
     /**
@@ -227,15 +228,17 @@ public class BailianLlmClient implements LlmClient {
      */
     private void validateConfiguration() {
         if (properties.getApiKey() == null || properties.getApiKey().isBlank()) {
-            throw new LlmClientException(
+            throw new LlmApiException(
                     LlmErrorType.CONFIGURATION,
-                    "DASHSCOPE_API_KEY is not configured"
+                    "DASHSCOPE_API_KEY is not configured",
+                    null
             );
         }
         if (properties.getModel() == null || properties.getModel().isBlank()) {
-            throw new LlmClientException(
+            throw new LlmApiException(
                     LlmErrorType.CONFIGURATION,
-                    "llm.model is not configured"
+                    "llm.model is not configured",
+                    null
             );
         }
     }
