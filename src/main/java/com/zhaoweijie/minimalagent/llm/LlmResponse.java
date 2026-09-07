@@ -1,5 +1,7 @@
 package com.zhaoweijie.minimalagent.llm;
 
+import com.zhaoweijie.minimalagent.action.AgentAction;
+import com.zhaoweijie.minimalagent.action.FinalAnswerAction;
 import com.zhaoweijie.minimalagent.action.ToolCallAction;
 
 import java.util.List;
@@ -37,5 +39,17 @@ public record LlmResponse(
      */
     public boolean isFinalResponse() {
         return toolCalls.isEmpty();
+    }
+
+    /**
+     * 将响应转换成 Runtime 可直接消费的 AgentAction 列表。
+     *
+     * @return 普通回答对应一个 FinalAnswerAction，工具响应对应全部 ToolCallAction
+     */
+    public List<AgentAction> actions() {
+        if (hasToolCalls()) {
+            return List.copyOf(toolCalls);
+        }
+        return List.of(new FinalAnswerAction(content));
     }
 }
