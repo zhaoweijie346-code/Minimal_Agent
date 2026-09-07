@@ -21,8 +21,9 @@ import com.zhaoweijie.minimalagent.tool.AgentTool;
 import com.zhaoweijie.minimalagent.tool.ToolExecutionContext;
 import com.zhaoweijie.minimalagent.tool.ToolRegistry;
 import com.zhaoweijie.minimalagent.tool.ToolResult;
+import com.zhaoweijie.minimalagent.trace.AgentTrace;
 import com.zhaoweijie.minimalagent.trace.InMemoryAgentTraceRecorder;
-import com.zhaoweijie.minimalagent.trace.TraceEventType;
+import com.zhaoweijie.minimalagent.trace.TraceType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -98,7 +99,10 @@ class AgentRuntimeTests {
                 "计算 1+1"
         );
 
-        assertThat(result).isEqualTo(new AgentRunResult("session-1", "结果是 2。", 2));
+        assertThat(result.traceId()).isNotBlank();
+        assertThat(result.sessionId()).isEqualTo("session-1");
+        assertThat(result.answer()).isEqualTo("结果是 2。");
+        assertThat(result.rounds()).isEqualTo(2);
         AgentSession session = sessionManager.getSession("session-1", "user-1");
         assertThat(session.getMessages())
                 .extracting(AgentMessage::role)
@@ -127,17 +131,30 @@ class AgentRuntimeTests {
         verify(calculator).execute(executionContext.capture(), any());
         assertThat(executionContext.getValue())
                 .isEqualTo(new ToolExecutionContext("user-1", "session-1"));
-        var trace = traceRecorder.getTrace("session-1");
-        assertThat(trace)
+        AgentTrace trace = traceRecorder.getTrace(result.traceId());
+        assertThat(trace.userId()).isEqualTo("user-1");
+        assertThat(trace.sessionId()).isEqualTo("session-1");
+        assertThat(trace.events())
                 .extracting(event -> event.type())
                 .containsExactly(
-                        TraceEventType.TOOL_CALL,
-                        TraceEventType.TOOL_RESULT,
-                        TraceEventType.FINAL_RESPONSE
+                        TraceType.LLM_CALL,
+                        TraceType.TOOL_CALL,
+                        TraceType.TOOL_RESULT,
+                        TraceType.LLM_CALL,
+                        TraceType.FINAL
                 );
-        assertThat(trace.get(0).arguments().path("expression").textValue()).isEqualTo("1+1");
-        assertThat(trace.get(1).toolResult().success()).isTrue();
-        assertThat(trace.get(2).finalResponse()).isEqualTo("结果是 2。");
+        assertThat(trace.events().get(0).round()).isEqualTo(1);
+        assertThat(trace.events().get(0).toolCallsReturned()).isTrue();
+        assertThat(trace.events().get(1).toolCallId()).isEqualTo("call-calculator");
+        assertThat(trace.events().get(1).arguments().path("expression").textValue())
+                .isEqualTo("1+1");
+        assertThat(trace.events().get(2).toolCallId()).isEqualTo("call-calculator");
+        assertThat(trace.events().get(2).toolResult().success()).isTrue();
+        assertThat(trace.events().get(3).round()).isEqualTo(2);
+        assertThat(trace.events().get(3).toolCallsReturned()).isFalse();
+        assertThat(trace.events().get(4).finalAnswer()).isEqualTo("结果是 2。");
+        assertThat(trace.events())
+                .allSatisfy(event -> assertThat(event.durationMillis()).isGreaterThanOrEqualTo(0));
     }
 
     @Test
@@ -216,6 +233,14 @@ class AgentRuntimeTests {
                 .isEqualTo("Tool execution failed: IllegalStateException")
                 .doesNotContain("secret detail");
         assertThat(result.answer()).isEqualTo("工具失败，暂时无法完成。");
+        assertThat(traceRecorder.getTrace(result.traceId()).events())
+                .filteredOn(event -> event.type() == TraceType.ERROR)
+                .singleElement()
+                .satisfies(event -> {
+                    assertThat(event.toolCallId()).isEqualTo("call-failure");
+                    assertThat(event.toolName()).isEqualTo("failing-tool");
+                    assertThat(event.error()).isEqualTo("Tool execution failed: IllegalStateException");
+                });
     }
 
     @Test
@@ -286,6 +311,38 @@ class AgentRuntimeTests {
     @Test
     void defaultsMaximumRoundsToEight() {
         assertThat(new AgentRuntimeProperties().getMaxRounds()).isEqualTo(8);
+    }
+
+    @Test
+    void createsANewTraceForEveryRequestInTheSameSession() {
+        llmClient.enqueue(new LlmResponse("first", List.of()));
+        llmClient.enqueue(new LlmResponse("second", List.of()));
+        AgentRuntime runtime = runtime(List.of());
+
+        AgentRunResult first = runtime.run("user-1", "session-1", "first request");
+        AgentRunResult second = runtime.run("user-1", "session-1", "second request");
+
+        assertThat(first.traceId()).isNotEqualTo(second.traceId());
+        assertThat(traceRecorder.getTracesBySession("session-1"))
+                .extracting(AgentTrace::traceId)
+                .containsExactly(first.traceId(), second.traceId());
+    }
+
+    @Test
+    void recordsLlmFailureAndRuntimeErrorWithoutInternalExceptionMessage() {
+        AgentRuntime runtime = runtime(List.of());
+
+        assertThatThrownBy(() -> runtime.run("user-1", "session-1", "fail"))
+                .isInstanceOf(IllegalStateException.class);
+
+        AgentTrace trace = traceRecorder.getTracesBySession("session-1").getFirst();
+        assertThat(trace.events())
+                .extracting(event -> event.type())
+                .containsExactly(TraceType.LLM_CALL, TraceType.ERROR);
+        assertThat(trace.events().get(0).error()).isEqualTo("IllegalStateException");
+        assertThat(trace.events().get(1).error()).isEqualTo("IllegalStateException");
+        assertThat(trace.events().toString())
+                .doesNotContain("No fake LLM response configured", "Authorization", "api-key");
     }
 
     /**

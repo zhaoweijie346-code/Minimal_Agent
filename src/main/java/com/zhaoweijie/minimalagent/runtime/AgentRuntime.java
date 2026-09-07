@@ -7,6 +7,7 @@ import com.zhaoweijie.minimalagent.context.AgentContext;
 import com.zhaoweijie.minimalagent.context.AgentMessage;
 import com.zhaoweijie.minimalagent.context.AgentMessageRole;
 import com.zhaoweijie.minimalagent.context.ContextManager;
+import com.zhaoweijie.minimalagent.exception.LlmClientException;
 import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsExceededException;
 import com.zhaoweijie.minimalagent.exception.ToolNotFoundException;
 import com.zhaoweijie.minimalagent.llm.LlmClient;
@@ -88,43 +89,67 @@ public class AgentRuntime {
         requireUserMessage(userMessage);
         AgentSession session = sessionManager.getOrCreate(sessionId, userId);
         String resolvedSessionId = session.getSessionId();
-        appendMessage(
-                userId,
-                resolvedSessionId,
-                new AgentMessage(AgentMessageRole.USER, userMessage, null, null)
-        );
+        String traceId = traceRecorder.startTrace(userId, resolvedSessionId);
+        long requestStartedAt = System.nanoTime();
+        int round = 0;
 
-        for (int round = 1; round <= properties.getMaxRounds(); round++) {
-            // ContextManager 在此处召回并可能压缩 Memory，tools 则始终从当前注册表动态生成。
-            AgentContext context = contextManager.build(userId, resolvedSessionId);
-            LlmResponse response = llmClient.chat(
-                    context,
-                    toolDefinitionProvider.getToolDefinitions()
-            );
-            validateResponse(response);
-
-            if (response.hasToolCalls()) {
-                handleToolCalls(userId, resolvedSessionId, response);
-                continue;
-            }
-
-            String answer = response.content();
+        try {
             appendMessage(
                     userId,
                     resolvedSessionId,
-                    new AgentMessage(AgentMessageRole.ASSISTANT, answer, null, null)
+                    new AgentMessage(AgentMessageRole.USER, userMessage, null, null)
             );
-            traceRecorder.recordFinalResponse(resolvedSessionId, answer);
-            return new AgentRunResult(resolvedSessionId, answer, round);
-        }
 
-        throw new MaxAgentRoundsExceededException(properties.getMaxRounds());
+            for (round = 1; round <= properties.getMaxRounds(); round++) {
+                // ContextManager 在此处召回并可能压缩 Memory，tools 始终从当前注册表动态生成。
+                AgentContext context = contextManager.build(userId, resolvedSessionId);
+                LlmResponse response = callLlm(traceId, round, context);
+
+                if (response.hasToolCalls()) {
+                    handleToolCalls(userId, resolvedSessionId, traceId, round, response);
+                    continue;
+                }
+
+                String answer = response.content();
+                appendMessage(
+                        userId,
+                        resolvedSessionId,
+                        new AgentMessage(AgentMessageRole.ASSISTANT, answer, null, null)
+                );
+                traceRecorder.recordFinal(
+                        traceId,
+                        round,
+                        answer,
+                        elapsedMillis(requestStartedAt)
+                );
+                return new AgentRunResult(traceId, resolvedSessionId, answer, round);
+            }
+
+            throw new MaxAgentRoundsExceededException(properties.getMaxRounds());
+        } catch (RuntimeException exception) {
+            // 只记录经过筛选的错误说明，不采集请求 Header、Authorization 或 API Key。
+            traceRecorder.recordError(
+                    traceId,
+                    Math.min(round, properties.getMaxRounds()),
+                    null,
+                    null,
+                    safeError(exception),
+                    elapsedMillis(requestStartedAt)
+            );
+            throw exception;
+        }
     }
 
     /**
      * 先保存完整 assistant(tool_calls)，再顺序执行并保存每个 role=tool 结果。
      */
-    private void handleToolCalls(String userId, String sessionId, LlmResponse response) {
+    private void handleToolCalls(
+            String userId,
+            String sessionId,
+            String traceId,
+            int round,
+            LlmResponse response
+    ) {
         appendMessage(
                 userId,
                 sessionId,
@@ -138,9 +163,21 @@ public class AgentRuntime {
 
         ToolExecutionContext executionContext = new ToolExecutionContext(userId, sessionId);
         for (ToolCallAction action : response.toolCalls()) {
-            traceRecorder.recordToolCall(sessionId, action);
+            traceRecorder.recordToolCall(traceId, round, action);
+            long toolStartedAt = System.nanoTime();
             ToolResult result = executeTool(executionContext, action);
-            traceRecorder.recordToolResult(sessionId, action, result);
+            long toolDuration = elapsedMillis(toolStartedAt);
+            traceRecorder.recordToolResult(traceId, round, action, result, toolDuration);
+            if (!result.success()) {
+                traceRecorder.recordError(
+                        traceId,
+                        round,
+                        action.toolCallId(),
+                        action.toolName(),
+                        result.error(),
+                        toolDuration
+                );
+            }
             appendMessage(
                     userId,
                     sessionId,
@@ -151,6 +188,37 @@ public class AgentRuntime {
                             null
                     )
             );
+        }
+    }
+
+    /**
+     * 调用一次 LLM 并无论成功或失败都记录轮次、耗时和 tool_calls 标记。
+     */
+    private LlmResponse callLlm(String traceId, int round, AgentContext context) {
+        long startedAt = System.nanoTime();
+        try {
+            LlmResponse response = llmClient.chat(
+                    context,
+                    toolDefinitionProvider.getToolDefinitions()
+            );
+            validateResponse(response);
+            traceRecorder.recordLlmCall(
+                    traceId,
+                    round,
+                    response.hasToolCalls(),
+                    elapsedMillis(startedAt),
+                    null
+            );
+            return response;
+        } catch (RuntimeException exception) {
+            traceRecorder.recordLlmCall(
+                    traceId,
+                    round,
+                    null,
+                    elapsedMillis(startedAt),
+                    safeError(exception)
+            );
+            throw exception;
         }
     }
 
@@ -220,5 +288,23 @@ public class AgentRuntime {
         if (userMessage == null || userMessage.isBlank()) {
             throw new IllegalArgumentException("userMessage must not be blank");
         }
+    }
+
+    /**
+     * 计算单调时钟耗时，避免系统时间调整影响 duration。
+     */
+    private long elapsedMillis(long startedAt) {
+        return Math.max(0, (System.nanoTime() - startedAt) / 1_000_000);
+    }
+
+    /**
+     * 返回不包含底层请求、Header 或凭证内容的安全错误说明。
+     */
+    private String safeError(RuntimeException exception) {
+        if (exception instanceof LlmClientException
+                || exception instanceof MaxAgentRoundsExceededException) {
+            return exception.getMessage();
+        }
+        return exception.getClass().getSimpleName();
     }
 }
