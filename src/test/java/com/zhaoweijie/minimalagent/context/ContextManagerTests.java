@@ -164,12 +164,42 @@ class ContextManagerTests {
                 .path("type").textValue()).isEqualTo("object");
     }
 
+    @Test
+    void recallsCompressedMemoryIntoApiMessagesBeforeModelCall() {
+        properties.setCompressionThreshold(2);
+        properties.setMaxRecentMessages(1);
+        AgentSession session = sessionManager.getOrCreate("session-1", "user-1");
+        session.getMessages().add(message(AgentMessageRole.USER, "original goal"));
+        session.getMessages().add(message(AgentMessageRole.ASSISTANT, "important fact"));
+        session.getMessages().add(message(AgentMessageRole.USER, "latest request"));
+        sessionManager.update(session);
+
+        AgentContext context = contextManager(List.of()).build("user-1", "session-1");
+
+        assertThat(context.sessionSummary()).contains("original goal", "important fact");
+        assertThat(context.recentMessages())
+                .extracting(AgentMessage::content)
+                .containsExactly("latest request");
+        assertThat(context.messages())
+                .extracting(AgentMessage::role)
+                .containsExactly(
+                        AgentMessageRole.SYSTEM,
+                        AgentMessageRole.SYSTEM,
+                        AgentMessageRole.USER
+                );
+    }
+
     /**
      * 使用指定工具集合创建 ContextManager。
      */
     private ContextManager contextManager(List<AgentTool> tools) {
-        return new ContextManager(
+        SessionMemoryManager memoryManager = new SessionMemoryManager(
                 sessionManager,
+                new BasicMemoryCompressor(properties),
+                properties
+        );
+        return new ContextManager(
+                memoryManager,
                 new ToolRegistry(tools),
                 objectMapper,
                 properties

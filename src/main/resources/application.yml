@@ -3,3 +3,5 @@ agent:
   context:
     system-prompt: "${AGENT_SYSTEM_PROMPT:You are a helpful AI assistant.}"
     max-recent-messages: "${AGENT_MAX_RECENT_MESSAGES:20}"
+    compression-threshold: "${AGENT_COMPRESSION_THRESHOLD:40}"
+    max-summary-characters: "${AGENT_MAX_SUMMARY_CHARACTERS:4000}"

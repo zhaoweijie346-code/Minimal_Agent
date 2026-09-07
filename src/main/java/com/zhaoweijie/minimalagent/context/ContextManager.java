@@ -3,17 +3,13 @@ package com.zhaoweijie.minimalagent.context;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.zhaoweijie.minimalagent.action.ToolCallAction;
 import com.zhaoweijie.minimalagent.config.AgentContextProperties;
-import com.zhaoweijie.minimalagent.session.AgentSession;
-import com.zhaoweijie.minimalagent.session.SessionManager;
 import com.zhaoweijie.minimalagent.tool.AgentTool;
 import com.zhaoweijie.minimalagent.tool.ToolRegistry;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 /**
  * 在每次调用 LLM 前构建隔离、截断且结构化的 Agent Context。
@@ -21,8 +17,8 @@ import java.util.Objects;
 @Component
 public class ContextManager {
 
-    /** 提供 Session 读取与用户所有权校验。 */
-    private final SessionManager sessionManager;
+    /** 在模型调用前召回并按需压缩 Session Memory。 */
+    private final SessionMemoryManager memoryManager;
 
     /** 提供当前已注册工具集合。 */
     private final ToolRegistry toolRegistry;
@@ -36,18 +32,18 @@ public class ContextManager {
     /**
      * 创建 Agent Context 管理器。
      *
-     * @param sessionManager Session 管理器
-     * @param toolRegistry   工具注册表
-     * @param objectMapper   应用统一配置的 Jackson 对象映射器
-     * @param properties     上下文配置属性
+     * @param memoryManager Session Memory 管理器
+     * @param toolRegistry  工具注册表
+     * @param objectMapper  应用统一配置的 Jackson 对象映射器
+     * @param properties    上下文配置属性
      */
     public ContextManager(
-            SessionManager sessionManager,
+            SessionMemoryManager memoryManager,
             ToolRegistry toolRegistry,
             ObjectMapper objectMapper,
             AgentContextProperties properties
     ) {
-        this.sessionManager = sessionManager;
+        this.memoryManager = memoryManager;
         this.toolRegistry = toolRegistry;
         this.objectMapper = objectMapper;
         this.properties = properties;
@@ -78,15 +74,16 @@ public class ContextManager {
             AgentMessage currentToolResult
     ) {
         validateCurrentToolResult(currentToolResult);
-        AgentSession session = sessionManager.getSession(sessionId, userId);
+        // ContextManager 是每次调用模型前的统一入口，因此在这里执行 Memory 召回。
+        SessionMemory memory = memoryManager.recall(userId, sessionId);
         List<AgentMessage> recentMessages = recentMessages(
-                session.getMessages(),
+                memory.recentMessages(),
                 currentToolResult
         );
 
         return new AgentContext(
                 properties.getSystemPrompt(),
-                session.getSummary(),
+                memory.summary(),
                 recentMessages,
                 currentToolResult,
                 buildToolDefinitions()
@@ -100,72 +97,15 @@ public class ContextManager {
             List<AgentMessage> messages,
             AgentMessage currentToolResult
     ) {
-        int start = Math.max(0, messages.size() - properties.getMaxRecentMessages());
-        start = expandForPersistedToolResult(messages, start);
-
-        // 当前结果尚未入库时，也必须把它所响应的 assistant tool_call 保留在窗口中。
-        if (currentToolResult != null) {
-            int assistantIndex = findAssistantToolCall(
-                    messages,
-                    messages.size() - 1,
-                    currentToolResult.toolCallId()
-            );
-            if (assistantIndex >= 0) {
-                start = Math.min(start, assistantIndex);
-            }
-        }
-
+        String currentToolCallId = currentToolResult == null
+                ? null
+                : currentToolResult.toolCallId();
+        int start = MessageWindow.startIndex(
+                messages,
+                properties.getMaxRecentMessages(),
+                currentToolCallId
+        );
         return List.copyOf(messages.subList(start, messages.size()));
-    }
-
-    /**
-     * 当截断后的第一条消息是 tool result 时，回溯到对应 assistant tool_call。
-     */
-    private int expandForPersistedToolResult(List<AgentMessage> messages, int start) {
-        int expandedStart = start;
-        while (expandedStart > 0) {
-            AgentMessage firstMessage = messages.get(expandedStart);
-            if (firstMessage.role() != AgentMessageRole.TOOL || firstMessage.toolCallId() == null) {
-                break;
-            }
-
-            int assistantIndex = findAssistantToolCall(
-                    messages,
-                    expandedStart - 1,
-                    firstMessage.toolCallId()
-            );
-            if (assistantIndex < 0) {
-                break;
-            }
-            expandedStart = assistantIndex;
-        }
-        return expandedStart;
-    }
-
-    /**
-     * 从指定位置向前寻找包含目标 toolCallId 的 assistant 消息。
-     */
-    private int findAssistantToolCall(
-            List<AgentMessage> messages,
-            int fromIndex,
-            String toolCallId
-    ) {
-        for (int index = fromIndex; index >= 0; index--) {
-            AgentMessage message = messages.get(index);
-            if (message.role() == AgentMessageRole.ASSISTANT
-                    && containsToolCall(message.toolCalls(), toolCallId)) {
-                return index;
-            }
-        }
-        return -1;
-    }
-
-    /**
-     * 判断工具调用列表是否包含指定调用标识。
-     */
-    private boolean containsToolCall(List<ToolCallAction> toolCalls, String toolCallId) {
-        return toolCalls.stream()
-                .anyMatch(toolCall -> Objects.equals(toolCall.toolCallId(), toolCallId));
     }
 
     /**
