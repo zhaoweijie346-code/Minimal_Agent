@@ -4,6 +4,8 @@ import com.zhaoweijie.minimalagent.trace.AgentTrace;
 import com.zhaoweijie.minimalagent.trace.AgentTraceRecorder;
 import com.zhaoweijie.minimalagent.trace.TraceEvent;
 import com.zhaoweijie.minimalagent.trace.TraceType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @Tag("integration")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class AgentRuntimeBailianE2eTests {
+
+    /** 输出真实 E2E 问题和最终回答，不记录 API Key、Header 或底层 HTTP 请求。 */
+    private static final Logger LOGGER = LoggerFactory.getLogger(AgentRuntimeBailianE2eTests.class);
 
     /** 所有用例共用的测试用户，不同场景使用不同 Session 保持隔离。 */
     private static final String USER_ID = "bailian-e2e-user";
@@ -101,12 +106,53 @@ class AgentRuntimeBailianE2eTests {
         assertThat(toolCallNames(trace)).containsSubsequence("search", "todo");
     }
 
+    @Test
+    void keepsContextAcrossCustomerCountTodoAndListFollowUps() {
+        String sessionId = "e2e-follow-up-" + UUID.randomUUID();
+
+        AgentRunResult countResult = run(
+                sessionId,
+                "明天有1个客户要见，后天有两个客户要见，未来两天内我要见多少位客户？"
+        );
+        AgentTrace countTrace = assertCompleted(countResult);
+        // 简单加法允许模型直接回答；本场景重点验证后续 Todo 工具能读取同一 Session 的结论。
+        assertThat(countResult.answer()).contains("3");
+
+        AgentRunResult addResult = run(
+                sessionId,
+                "帮我把未来两天要见多少位客户记为待办"
+        );
+        AgentTrace addTrace = assertCompleted(addResult);
+        TraceEvent addCall = assertSuccessfulTool(addTrace, "todo");
+        assertThat(addCall.arguments().path("action").asText()).isEqualTo("add");
+        assertThat(addCall.arguments().path("content").asText()).contains("3");
+
+        AgentRunResult listResult = run(sessionId, "查看一下我的待办");
+        AgentTrace listTrace = assertCompleted(listResult);
+        TraceEvent listCall = assertSuccessfulTool(listTrace, "todo");
+        assertThat(listCall.arguments().path("action").asText()).isEqualTo("list");
+
+        assertThat(countResult.sessionId()).isEqualTo(sessionId);
+        assertThat(addResult.sessionId()).isEqualTo(sessionId);
+        assertThat(listResult.sessionId()).isEqualTo(sessionId);
+    }
+
     /**
      * 使用唯一 Session 执行真实请求，避免并发或重复执行时共享历史。
      */
     private AgentRunResult run(String message) {
         String sessionId = "e2e-" + UUID.randomUUID();
-        return agentRuntime.run(USER_ID, sessionId, message);
+        return run(sessionId, message);
+    }
+
+    /**
+     * 在指定 Session 中执行真实请求，用于验证多轮追问的 Context 与 Todo 状态延续。
+     */
+    private AgentRunResult run(String sessionId, String message) {
+        AgentRunResult result = agentRuntime.run(USER_ID, sessionId, message);
+        LOGGER.info("Bailian E2E question: {}", message);
+        LOGGER.info("Bailian E2E final answer: {}", result.answer());
+        return result;
     }
 
     /**
