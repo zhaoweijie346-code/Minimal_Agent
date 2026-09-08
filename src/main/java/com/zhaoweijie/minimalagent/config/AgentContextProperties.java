@@ -19,6 +19,12 @@ public class AgentContextProperties {
     /** 压缩摘要允许保留的最大字符数。 */
     private int maxSummaryCharacters = 4000;
 
+    /** 单条历史消息进入模型 Context 时允许保留的最大字符数。 */
+    private int maxMessageCharacters = 16000;
+
+    /** 一次模型请求中 System、Summary 和历史消息的总字符预算。 */
+    private int maxContextCharacters = 64000;
+
     public int getMaxRecentMessages() {
         return maxRecentMessages;
     }
@@ -50,5 +56,27 @@ public class AgentContextProperties {
             throw new IllegalArgumentException("maxSummaryCharacters must be greater than zero");
         }
         this.maxSummaryCharacters = maxSummaryCharacters;
+    }
+
+    public int getMaxMessageCharacters() {
+        return maxMessageCharacters;
+    }
+
+    public void setMaxMessageCharacters(int maxMessageCharacters) {
+        if (maxMessageCharacters < 64) {
+            throw new IllegalArgumentException("maxMessageCharacters must be at least 64");
+        }
+        this.maxMessageCharacters = maxMessageCharacters;
+    }
+
+    public int getMaxContextCharacters() {
+        return maxContextCharacters;
+    }
+
+    public void setMaxContextCharacters(int maxContextCharacters) {
+        if (maxContextCharacters < 256) {
+            throw new IllegalArgumentException("maxContextCharacters must be at least 256");
+        }
+        this.maxContextCharacters = maxContextCharacters;
     }
 }

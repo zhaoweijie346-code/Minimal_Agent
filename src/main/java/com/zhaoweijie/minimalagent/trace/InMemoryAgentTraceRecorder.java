@@ -3,6 +3,7 @@ package com.zhaoweijie.minimalagent.trace;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.zhaoweijie.minimalagent.action.ToolCallAction;
 import com.zhaoweijie.minimalagent.exception.TraceNotFoundException;
+import com.zhaoweijie.minimalagent.exception.TraceAccessDeniedException;
 import com.zhaoweijie.minimalagent.tool.ToolResult;
 import org.springframework.stereotype.Component;
 
@@ -94,6 +95,15 @@ public class InMemoryAgentTraceRecorder implements AgentTraceRecorder {
     @Override
     public AgentTrace getTrace(String traceId) {
         return snapshot(traceId, requireState(traceId));
+    }
+
+    @Override
+    public AgentTrace getTrace(String traceId, String userId) {
+        TraceState state = requireState(traceId);
+        if (!state.userId().equals(userId)) {
+            throw new TraceAccessDeniedException(traceId, userId);
+        }
+        return snapshot(traceId, state);
     }
 
     @Override

@@ -357,7 +357,8 @@ class AgentRuntimeCoreScenariosTests {
                 new ToolDefinitionProvider(toolRegistry),
                 objectMapper,
                 traceRecorder,
-                new AgentRuntimeProperties()
+                new AgentRuntimeProperties(),
+                new SessionExecutionCoordinator()
         );
     }
 

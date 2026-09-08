@@ -50,6 +50,9 @@ public interface AgentTraceRecorder {
     /** 按 traceId 获取一次请求的完整 Trace 快照。 */
     AgentTrace getTrace(String traceId);
 
+    /** 按 traceId 和请求用户获取 Trace，并校验用户归属。 */
+    AgentTrace getTrace(String traceId, String userId);
+
     /** 获取指定 Session 下的全部请求 Trace 快照。 */
     List<AgentTrace> getTracesBySession(String sessionId);
 }

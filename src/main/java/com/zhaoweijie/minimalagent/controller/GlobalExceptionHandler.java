@@ -2,6 +2,7 @@ package com.zhaoweijie.minimalagent.controller;
 
 import com.zhaoweijie.minimalagent.controller.dto.ErrorResponse;
 import com.zhaoweijie.minimalagent.exception.InvalidLlmOutputException;
+import com.zhaoweijie.minimalagent.exception.ContextWindowExceededException;
 import com.zhaoweijie.minimalagent.exception.LlmApiException;
 import com.zhaoweijie.minimalagent.exception.LlmClientException;
 import com.zhaoweijie.minimalagent.exception.LlmErrorType;
@@ -10,6 +11,7 @@ import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsException;
 import com.zhaoweijie.minimalagent.exception.SessionAccessDeniedException;
 import com.zhaoweijie.minimalagent.exception.SessionNotFoundException;
 import com.zhaoweijie.minimalagent.exception.TraceNotFoundException;
+import com.zhaoweijie.minimalagent.exception.TraceAccessDeniedException;
 import com.zhaoweijie.minimalagent.exception.ToolArgumentException;
 import com.zhaoweijie.minimalagent.exception.ToolNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -103,9 +105,9 @@ public class GlobalExceptionHandler {
     /**
      * 将跨用户 Session 访问映射为 403。
      */
-    @ExceptionHandler(SessionAccessDeniedException.class)
+    @ExceptionHandler({SessionAccessDeniedException.class, TraceAccessDeniedException.class})
     public ResponseEntity<ErrorResponse> handleAccessDenied(
-            SessionAccessDeniedException exception,
+            RuntimeException exception,
             HttpServletRequest request
     ) {
         return response(HttpStatus.FORBIDDEN, "ACCESS_DENIED", exception.getMessage(), request);
@@ -214,6 +216,22 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         return response(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "Invalid request", request);
+    }
+
+    /**
+     * 将不可拆分的当前对话轮次超限映射为 400，提示调用方缩短输入或结果。
+     */
+    @ExceptionHandler(ContextWindowExceededException.class)
+    public ResponseEntity<ErrorResponse> handleContextWindowExceeded(
+            ContextWindowExceededException exception,
+            HttpServletRequest request
+    ) {
+        return response(
+                HttpStatus.BAD_REQUEST,
+                "CONTEXT_LIMIT_EXCEEDED",
+                exception.getMessage(),
+                request
+        );
     }
 
     /**

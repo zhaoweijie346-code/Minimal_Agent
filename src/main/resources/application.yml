@@ -1,11 +1,15 @@
 # Agent 上下文窗口配置，可通过环境变量覆盖默认值。
 agent:
   max-rounds: "${AGENT_MAX_ROUNDS:8}"
+  max-user-message-characters: "${AGENT_MAX_USER_MESSAGE_CHARACTERS:10000}"
+  max-tool-result-characters: "${AGENT_MAX_TOOL_RESULT_CHARACTERS:16000}"
   context:
     system-prompt-resource: "classpath:prompts/agent-system.txt"
     max-recent-messages: "${AGENT_MAX_RECENT_MESSAGES:20}"
     compression-threshold: "${AGENT_COMPRESSION_THRESHOLD:40}"
     max-summary-characters: "${AGENT_MAX_SUMMARY_CHARACTERS:4000}"
+    max-message-characters: "${AGENT_MAX_MESSAGE_CHARACTERS:16000}"
+    max-context-characters: "${AGENT_MAX_CONTEXT_CHARACTERS:64000}"
 
 # 百炼连接信息全部来自外部配置；API Key 没有仓库内默认值。
 llm:

@@ -1,6 +1,7 @@
 package com.zhaoweijie.minimalagent.runtime;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.zhaoweijie.minimalagent.action.ToolCallAction;
 import com.zhaoweijie.minimalagent.config.AgentRuntimeProperties;
 import com.zhaoweijie.minimalagent.context.AgentContext;
@@ -58,6 +59,9 @@ public class AgentRuntime {
     /** 主循环最大轮数配置。 */
     private final AgentRuntimeProperties properties;
 
+    /** 保证同一 Session 的完整 Agent Loop 不会并发交叉。 */
+    private final SessionExecutionCoordinator executionCoordinator;
+
     /**
      * 创建项目自有的 Agent Runtime。
      */
@@ -69,7 +73,8 @@ public class AgentRuntime {
             ToolDefinitionProvider toolDefinitionProvider,
             ObjectMapper objectMapper,
             AgentTraceRecorder traceRecorder,
-            AgentRuntimeProperties properties
+            AgentRuntimeProperties properties,
+            SessionExecutionCoordinator executionCoordinator
     ) {
         this.llmClient = llmClient;
         this.contextManager = contextManager;
@@ -79,6 +84,7 @@ public class AgentRuntime {
         this.objectMapper = objectMapper;
         this.traceRecorder = traceRecorder;
         this.properties = properties;
+        this.executionCoordinator = executionCoordinator;
     }
 
     /**
@@ -93,6 +99,17 @@ public class AgentRuntime {
         requireUserMessage(userMessage);
         AgentSession session = sessionManager.getOrCreate(sessionId, userId);
         String resolvedSessionId = session.getSessionId();
+        return executionCoordinator.execute(
+                resolvedSessionId,
+                () -> runLocked(userId, resolvedSessionId, userMessage)
+        );
+    }
+
+    /**
+     * 在 Session 互斥区内保存消息并执行完整 Agent Loop。
+     */
+    private AgentRunResult runLocked(String userId, String sessionId, String userMessage) {
+        String resolvedSessionId = sessionId;
         String traceId = traceRecorder.startTrace(userId, resolvedSessionId);
         long requestStartedAt = System.nanoTime();
         int round = 0;
@@ -253,7 +270,36 @@ public class AgentRuntime {
      * 使用标准 ToolResult JSON 作为 tool message content，供 Qwen 在下一轮决策。
      */
     private String serializeToolResult(ToolResult result) {
-        return objectMapper.valueToTree(result).toString();
+        String serialized = objectMapper.valueToTree(result).toString();
+        int limit = properties.getMaxToolResultCharacters();
+        if (serialized.length() <= limit) {
+            return serialized;
+        }
+
+        // 超长结果仍保持合法 JSON 和 ToolResult 关键字段，预览长度按最终序列化结果动态收缩。
+        String rawData = result.data() == null ? "null" : result.data().toString();
+        String preview = rawData.substring(0, Math.min(rawData.length(), Math.max(0, limit - 256)));
+        ObjectNode limitedData = objectMapper.createObjectNode();
+        limitedData.put("truncated", true);
+        limitedData.put("preview", preview);
+        ObjectNode limitedResult = objectMapper.createObjectNode();
+        limitedResult.put("success", result.success());
+        limitedResult.put("toolName", truncate(result.toolName(), 64));
+        limitedResult.set("data", limitedData);
+        if (result.error() == null) {
+            limitedResult.putNull("error");
+        } else {
+            limitedResult.put("error", truncate(result.error(), 64));
+        }
+
+        String limited = limitedResult.toString();
+        while (limited.length() > limit && !preview.isEmpty()) {
+            int overflow = limited.length() - limit;
+            preview = preview.substring(0, Math.max(0, preview.length() - overflow));
+            limitedData.put("preview", preview);
+            limited = limitedResult.toString();
+        }
+        return limited;
     }
 
     /**
@@ -292,6 +338,19 @@ public class AgentRuntime {
         if (userMessage == null || userMessage.isBlank()) {
             throw new IllegalArgumentException("userMessage must not be blank");
         }
+        if (userMessage.length() > properties.getMaxUserMessageCharacters()) {
+            throw new IllegalArgumentException("userMessage exceeds the configured character limit");
+        }
+    }
+
+    /**
+     * 将可选文本限制到指定字符数，且不返回原值以外的敏感内容。
+     */
+    private String truncate(String value, int maxCharacters) {
+        if (value == null || value.length() <= maxCharacters) {
+            return value;
+        }
+        return value.substring(0, maxCharacters);
     }
 
     /**

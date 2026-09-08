@@ -12,6 +12,7 @@ import com.zhaoweijie.minimalagent.exception.SessionNotFoundException;
 import com.zhaoweijie.minimalagent.exception.ToolArgumentException;
 import com.zhaoweijie.minimalagent.exception.ToolNotFoundException;
 import com.zhaoweijie.minimalagent.exception.TraceNotFoundException;
+import com.zhaoweijie.minimalagent.exception.TraceAccessDeniedException;
 import com.zhaoweijie.minimalagent.runtime.AgentRunResult;
 import com.zhaoweijie.minimalagent.runtime.AgentRuntime;
 import com.zhaoweijie.minimalagent.session.AgentSession;
@@ -157,11 +158,11 @@ class RestApiTests {
                 null,
                 now
         );
-        when(traceRecorder.getTrace("trace-1")).thenReturn(new AgentTrace(
+        when(traceRecorder.getTrace("trace-1", "user-a")).thenReturn(new AgentTrace(
                 "trace-1", "user-a", "session-1", now, List.of(event)
         ));
 
-        mockMvc.perform(get("/api/traces/trace-1"))
+        mockMvc.perform(get("/api/traces/trace-1").queryParam("userId", "user-a"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.traceId").value("trace-1"))
                 .andExpect(jsonPath("$.userId").value("user-a"))
@@ -198,10 +199,23 @@ class RestApiTests {
     }
 
     @Test
-    void mapsMissingTraceToNotFound() throws Exception {
-        when(traceRecorder.getTrace("missing")).thenThrow(new TraceNotFoundException("missing"));
+    void mapsCrossUserTraceAccessToForbidden() throws Exception {
+        when(traceRecorder.getTrace("trace-1", "user-b")).thenThrow(
+                new TraceAccessDeniedException("trace-1", "user-b")
+        );
 
-        mockMvc.perform(get("/api/traces/missing"))
+        mockMvc.perform(get("/api/traces/trace-1").queryParam("userId", "user-b"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error").value("ACCESS_DENIED"))
+                .andExpect(jsonPath("$.stackTrace").doesNotExist());
+    }
+
+    @Test
+    void mapsMissingTraceToNotFound() throws Exception {
+        when(traceRecorder.getTrace("missing", "user-a"))
+                .thenThrow(new TraceNotFoundException("missing"));
+
+        mockMvc.perform(get("/api/traces/missing").queryParam("userId", "user-a"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("NOT_FOUND"))
                 .andExpect(jsonPath("$.message").value("Trace not found: missing"))

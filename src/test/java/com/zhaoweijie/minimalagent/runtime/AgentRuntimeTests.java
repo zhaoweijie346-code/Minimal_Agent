@@ -8,12 +8,15 @@ import com.zhaoweijie.minimalagent.config.AgentContextProperties;
 import com.zhaoweijie.minimalagent.config.AgentRuntimeProperties;
 import com.zhaoweijie.minimalagent.context.AgentMessage;
 import com.zhaoweijie.minimalagent.context.AgentMessageRole;
+import com.zhaoweijie.minimalagent.context.AgentContext;
 import com.zhaoweijie.minimalagent.context.BasicMemoryCompressor;
 import com.zhaoweijie.minimalagent.context.ContextManager;
 import com.zhaoweijie.minimalagent.context.SessionMemoryManager;
 import com.zhaoweijie.minimalagent.exception.MaxAgentRoundsException;
 import com.zhaoweijie.minimalagent.llm.FakeLlmClient;
+import com.zhaoweijie.minimalagent.llm.LlmClient;
 import com.zhaoweijie.minimalagent.llm.LlmResponse;
+import com.zhaoweijie.minimalagent.llm.ToolDefinition;
 import com.zhaoweijie.minimalagent.llm.ToolDefinitionProvider;
 import com.zhaoweijie.minimalagent.session.AgentSession;
 import com.zhaoweijie.minimalagent.session.InMemorySessionManager;
@@ -29,6 +32,12 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -309,6 +318,74 @@ class AgentRuntimeTests {
     }
 
     @Test
+    void serializesConcurrentAgentLoopsForTheSameSession() throws Exception {
+        BlockingLlmClient blockingClient = new BlockingLlmClient();
+        AgentRuntime runtime = runtime(List.of(), blockingClient);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<AgentRunResult> first = executor.submit(
+                    () -> runtime.run("user-1", "session-1", "first request")
+            );
+            assertThat(blockingClient.awaitFirstCall()).isTrue();
+
+            Future<AgentRunResult> second = executor.submit(
+                    () -> runtime.run("user-1", "session-1", "second request")
+            );
+            assertThat(blockingClient.awaitSecondCall(200)).isFalse();
+
+            blockingClient.releaseFirstCall();
+            assertThat(first.get(2, TimeUnit.SECONDS).answer()).isEqualTo("first answer");
+            assertThat(second.get(2, TimeUnit.SECONDS).answer()).isEqualTo("second answer");
+        } finally {
+            blockingClient.releaseFirstCall();
+            executor.shutdownNow();
+        }
+
+        assertThat(sessionManager.getSession("session-1", "user-1").getMessages())
+                .extracting(AgentMessage::content)
+                .containsExactly("first request", "first answer", "second request", "second answer");
+    }
+
+    @Test
+    void rejectsOversizedUserMessageBeforeCreatingSession() {
+        runtimeProperties.setMaxUserMessageCharacters(5);
+
+        assertThatThrownBy(() -> runtime(List.of()).run("user-1", "session-1", "123456"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("character limit");
+        assertThatThrownBy(() -> sessionManager.getSession("session-1", "user-1"))
+                .isInstanceOf(com.zhaoweijie.minimalagent.exception.SessionNotFoundException.class);
+    }
+
+    @Test
+    void truncatesOversizedToolResultAsValidJsonBeforeReturningItToLlm() throws Exception {
+        runtimeProperties.setMaxToolResultCharacters(256);
+        AgentTool search = tool("search");
+        when(search.execute(any(), any())).thenReturn(new ToolResult(
+                true,
+                "search",
+                objectMapper.createObjectNode().put("content", "x".repeat(2000)),
+                null
+        ));
+        llmClient.enqueue(toolResponse(
+                "call-search",
+                "search",
+                objectMapper.createObjectNode().put("query", "large result")
+        ));
+        llmClient.enqueue(new LlmResponse("done", List.of()));
+
+        runtime(List.of(search)).run("user-1", "session-1", "search");
+
+        String toolContent = sessionManager.getSession("session-1", "user-1")
+                .getMessages().get(2).content();
+        JsonNode toolJson = objectMapper.readTree(toolContent);
+        assertThat(toolContent.length()).isLessThanOrEqualTo(256);
+        assertThat(toolJson.path("success").booleanValue()).isTrue();
+        assertThat(toolJson.path("data").path("truncated").booleanValue()).isTrue();
+    }
+
+    @Test
     void defaultsMaximumRoundsToEight() {
         assertThat(new AgentRuntimeProperties().getMaxRounds()).isEqualTo(8);
     }
@@ -325,7 +402,8 @@ class AgentRuntimeTests {
         assertThat(first.traceId()).isNotEqualTo(second.traceId());
         assertThat(traceRecorder.getTracesBySession("session-1"))
                 .extracting(AgentTrace::traceId)
-                .containsExactly(first.traceId(), second.traceId());
+                // Trace 查询未约定同一时间戳下的顺序，只验证当前 Session 的完整集合。
+                .containsExactlyInAnyOrder(first.traceId(), second.traceId());
     }
 
     @Test
@@ -349,16 +427,24 @@ class AgentRuntimeTests {
      * 使用指定工具构建包含真实 Session、Context、Registry 和 Trace 的 Runtime。
      */
     private AgentRuntime runtime(List<AgentTool> tools) {
+        return runtime(tools, llmClient);
+    }
+
+    /**
+     * 使用指定 LLM Client 构建 Runtime，供并发边界测试替换同步 Fake。
+     */
+    private AgentRuntime runtime(List<AgentTool> tools, LlmClient client) {
         ToolRegistry toolRegistry = new ToolRegistry(tools);
         return new AgentRuntime(
-                llmClient,
+                client,
                 contextManager,
                 sessionManager,
                 toolRegistry,
                 new ToolDefinitionProvider(toolRegistry),
                 objectMapper,
                 traceRecorder,
-                runtimeProperties
+                runtimeProperties,
+                new SessionExecutionCoordinator()
         );
     }
 
@@ -383,5 +469,60 @@ class AgentRuntimeTests {
                 null,
                 List.of(new ToolCallAction(callId, toolName, arguments))
         );
+    }
+
+    /**
+     * 首次调用可阻塞的 LLM Client，用于确认第二个同 Session 请求不能进入 Agent Loop。
+     */
+    private static final class BlockingLlmClient implements LlmClient {
+
+        /** 首次模型调用已经进入的信号。 */
+        private final CountDownLatch firstCallEntered = new CountDownLatch(1);
+
+        /** 允许首次模型调用完成的信号。 */
+        private final CountDownLatch releaseFirstCall = new CountDownLatch(1);
+
+        /** 第二次模型调用已经进入的信号。 */
+        private final CountDownLatch secondCallEntered = new CountDownLatch(1);
+
+        /** 模型调用次数。 */
+        private final AtomicInteger calls = new AtomicInteger();
+
+        @Override
+        public LlmResponse chat(AgentContext context, List<ToolDefinition> tools) {
+            int call = calls.incrementAndGet();
+            if (call == 1) {
+                firstCallEntered.countDown();
+                awaitRelease();
+                return new LlmResponse("first answer", List.of());
+            }
+            secondCallEntered.countDown();
+            return new LlmResponse("second answer", List.of());
+        }
+
+        /** 等待首次调用进入。 */
+        private boolean awaitFirstCall() throws InterruptedException {
+            return firstCallEntered.await(2, TimeUnit.SECONDS);
+        }
+
+        /** 在指定短时间内观察第二次调用是否错误地并发进入。 */
+        private boolean awaitSecondCall(long timeoutMillis) throws InterruptedException {
+            return secondCallEntered.await(timeoutMillis, TimeUnit.MILLISECONDS);
+        }
+
+        /** 释放首次阻塞调用。 */
+        private void releaseFirstCall() {
+            releaseFirstCall.countDown();
+        }
+
+        /** 等待测试线程释放首次调用，并保留线程中断语义。 */
+        private void awaitRelease() {
+            try {
+                releaseFirstCall.await();
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Blocking LLM test interrupted", exception);
+            }
+        }
     }
 }

@@ -2,14 +2,18 @@ package com.zhaoweijie.minimalagent.controller;
 
 import com.zhaoweijie.minimalagent.controller.dto.TraceResponse;
 import com.zhaoweijie.minimalagent.trace.AgentTraceRecorder;
+import jakarta.validation.constraints.NotBlank;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 按请求级 traceId 查询 Agent 行为链的 REST Controller。
  */
+@Validated
 @RestController
 @RequestMapping("/api/traces")
 public class TraceController {
@@ -29,7 +33,10 @@ public class TraceController {
      * 返回指定请求的完整 Trace，不包含请求 Header 或密钥。
      */
     @GetMapping("/{traceId}")
-    public TraceResponse getTrace(@PathVariable String traceId) {
-        return dtoMapper.toTrace(traceRecorder.getTrace(traceId));
+    public TraceResponse getTrace(
+            @PathVariable String traceId,
+            @RequestParam @NotBlank(message = "userId must not be blank") String userId
+    ) {
+        return dtoMapper.toTrace(traceRecorder.getTrace(traceId, userId));
     }
 }
